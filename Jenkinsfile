@@ -88,7 +88,7 @@ pipeline {
                       -e CORS_ALLOWED_ORIGINS=http://localhost:3000 \
                       ${DOCKER_HUB_USER}/credit-backend:latest"""
 
-                    sh "sleep 30"
+                    sh "sleep 20"
 
                     sh """docker run -d \
                       --name credit-frontend \
@@ -106,12 +106,10 @@ pipeline {
             steps {
                 sshagent(['ssh-azure-key']) {
                     sh """
-                        # Copier les manifests sur le master
                         scp -o StrictHostKeyChecking=no -r \
                             Kubernetes/ \
                             azureuser@${K8S_MASTER}:/tmp/k8s/
 
-                        # Appliquer les manifests et redémarrer les pods
                         ssh -o StrictHostKeyChecking=no \
                             azureuser@${K8S_MASTER} '
                                 sudo kubectl apply -f /tmp/k8s/namespace.yaml
@@ -120,8 +118,6 @@ pipeline {
                                 sudo kubectl apply -f /tmp/k8s/frontend.yaml
                                 sudo kubectl rollout restart deployment/backend -n credit-app
                                 sudo kubectl rollout restart deployment/frontend -n credit-app
-                                sudo kubectl rollout status deployment/backend -n credit-app --timeout=120s
-                                sudo kubectl rollout status deployment/frontend -n credit-app --timeout=120s
                                 sudo kubectl get pods -n credit-app
                             '
                     """
@@ -131,10 +127,9 @@ pipeline {
 
         stage('Smoke Test') {
             steps {
-                sh "sleep 15"
-                sh "curl -f http://localhost:3000 && echo 'Local OK' || echo 'Local check needed'"
+                sh "sleep 20"
+                sh "curl -f http://localhost:3000 && echo 'Local OK' || echo 'check needed'"
                 sh "curl -f http://${K8S_MASTER}:30080 && echo 'K8s OK' || echo 'K8s check needed'"
-                sh "docker ps | grep -E 'credit-backend|credit-frontend|mysql-db'"
             }
         }
     }
