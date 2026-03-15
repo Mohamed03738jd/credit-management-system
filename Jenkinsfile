@@ -106,26 +106,22 @@ pipeline {
             steps {
                 sshagent(['ssh-azure-key']) {
                     sh """
-                        # Créer le dossier sur le master
-                        ssh -o StrictHostKeyChecking=no \
-                            azureuser@${K8S_MASTER} 'mkdir -p /tmp/k8s'
+                        # Copier les fichiers un par un
+                        ssh -o StrictHostKeyChecking=no azureuser@${K8S_MASTER} 'rm -rf /tmp/k8s && mkdir -p /tmp/k8s'
+                        scp -o StrictHostKeyChecking=no Kubernetes/namespace.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
+                        scp -o StrictHostKeyChecking=no Kubernetes/mysql.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
+                        scp -o StrictHostKeyChecking=no Kubernetes/backend.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
+                        scp -o StrictHostKeyChecking=no Kubernetes/frontend.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
 
-                        # Copier les manifests
-                        scp -o StrictHostKeyChecking=no -r \
-                            Kubernetes/ \
-                            azureuser@${K8S_MASTER}:/tmp/k8s/
-
-                        # Déployer sur K8s
-                        ssh -o StrictHostKeyChecking=no \
-                            azureuser@${K8S_MASTER} '
-                                sudo kubectl apply -f /tmp/k8s/namespace.yaml
-                                sudo kubectl apply -f /tmp/k8s/mysql.yaml
-                                sudo kubectl apply -f /tmp/k8s/backend.yaml
-                                sudo kubectl apply -f /tmp/k8s/frontend.yaml
-                                sudo kubectl rollout restart deployment/backend -n credit-app
-                                sudo kubectl rollout restart deployment/frontend -n credit-app
-                                sudo kubectl get pods -n credit-app
-                            '
+                        ssh -o StrictHostKeyChecking=no azureuser@${K8S_MASTER} '
+                            sudo kubectl apply -f /tmp/k8s/namespace.yaml
+                            sudo kubectl apply -f /tmp/k8s/mysql.yaml
+                            sudo kubectl apply -f /tmp/k8s/backend.yaml
+                            sudo kubectl apply -f /tmp/k8s/frontend.yaml
+                            sudo kubectl rollout restart deployment/backend -n credit-app
+                            sudo kubectl rollout restart deployment/frontend -n credit-app
+                            sudo kubectl get pods -n credit-app
+                        '
                     """
                 }
             }
