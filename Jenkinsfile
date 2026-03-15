@@ -106,10 +106,16 @@ pipeline {
             steps {
                 sshagent(['ssh-azure-key']) {
                     sh """
+                        # Créer le dossier sur le master
+                        ssh -o StrictHostKeyChecking=no \
+                            azureuser@${K8S_MASTER} 'mkdir -p /tmp/k8s'
+
+                        # Copier les manifests
                         scp -o StrictHostKeyChecking=no -r \
                             Kubernetes/ \
                             azureuser@${K8S_MASTER}:/tmp/k8s/
 
+                        # Déployer sur K8s
                         ssh -o StrictHostKeyChecking=no \
                             azureuser@${K8S_MASTER} '
                                 sudo kubectl apply -f /tmp/k8s/namespace.yaml
