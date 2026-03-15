@@ -46,7 +46,7 @@ pipeline {
         stage('Build Frontend Image') {
             steps {
                 dir("${FRONTEND_PATH}") {
-                    sh "docker build -t ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG} ."
+                    sh "docker build --build-arg VITE_API_URL=http://${K8S_MASTER}:30080/api -t ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG} ."
                     sh "docker tag ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG} ${DOCKER_HUB_USER}/credit-frontend:latest"
                     echo "Frontend image OK"
                 }
