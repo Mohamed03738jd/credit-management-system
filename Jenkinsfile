@@ -14,11 +14,12 @@ pipeline {
         DB_PASSWORD      = 'mohamed12345'
         JWT_SECRET       = '5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437'
         AES_KEY          = 'MySecretKey12345MySecretKey12345'
+        DB_URL           = 'jdbc:mysql://mysql-db:3306/python?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC'
     }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '5'))
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
     }
 
@@ -27,7 +28,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Checkout OK - Branch: ${env.BRANCH_NAME}"
+                echo "Checkout OK"
             }
         }
 
@@ -36,7 +37,7 @@ pipeline {
                 dir("${BACKEND_PATH}") {
                     sh "docker build -t ${DOCKER_HUB_USER}/credit-backend:${IMAGE_TAG} ."
                     sh "docker tag ${DOCKER_HUB_USER}/credit-backend:${IMAGE_TAG} ${DOCKER_HUB_USER}/credit-backend:latest"
-                    echo "Backend image built OK"
+                    echo "Backend image OK"
                 }
             }
         }
@@ -46,7 +47,7 @@ pipeline {
                 dir("${FRONTEND_PATH}") {
                     sh "docker build -t ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG} ."
                     sh "docker tag ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG} ${DOCKER_HUB_USER}/credit-frontend:latest"
-                    echo "Frontend image built OK"
+                    echo "Frontend image OK"
                 }
             }
         }
@@ -58,66 +59,64 @@ pipeline {
                 sh "docker push ${DOCKER_HUB_USER}/credit-backend:latest"
                 sh "docker push ${DOCKER_HUB_USER}/credit-frontend:${IMAGE_TAG}"
                 sh "docker push ${DOCKER_HUB_USER}/credit-frontend:latest"
-                echo "Push to Docker Hub OK"
+                echo "Push Docker Hub OK"
             }
         }
 
         stage('Deploy') {
             steps {
-                sh """
-                docker network create ${NETWORK} 2>/dev/null || true
-                docker network connect ${NETWORK} mysql-db 2>/dev/null || true
-                docker stop credit-backend credit-frontend 2>/dev/null || true
-                docker rm credit-backend credit-frontend 2>/dev/null || true
-                sleep 3
+                script {
+                    sh "docker network create ${NETWORK} 2>/dev/null || true"
+                    sh "docker network connect ${NETWORK} ${DB_HOST} 2>/dev/null || true"
+                    sh "docker stop credit-backend credit-frontend 2>/dev/null || true"
+                    sh "docker rm credit-backend credit-frontend 2>/dev/null || true"
+                    sh "sleep 3"
 
-                docker run -d \
-                  --name credit-backend \
-                  --network ${NETWORK} \
-                  --restart unless-stopped \
-                  -p 8080:8080 \
-                  -e SPRING_DATASOURCE_URL=jdbc:mysql://${DB_HOST}:3306/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC \
-                  -e SPRING_DATASOURCE_USERNAME=${DB_USER} \
-                  -e SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD} \
-                  -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
-                  -e JWT_SECRET=${JWT_SECRET} \
-                  -e JWT_EXPIRATION=86400000 \
-                  -e ENCRYPTION_SECRET_KEY=${AES_KEY} \
-                  -e CORS_ALLOWED_ORIGINS=http://localhost:3000 \
-                  ${DOCKER_HUB_USER}/credit-backend:latest
+                    sh """docker run -d \
+                      --name credit-backend \
+                      --network ${NETWORK} \
+                      --restart unless-stopped \
+                      -p 8080:8080 \
+                      -e 'SPRING_DATASOURCE_URL=${DB_URL}' \
+                      -e SPRING_DATASOURCE_USERNAME=${DB_USER} \
+                      -e SPRING_DATASOURCE_PASSWORD=${DB_PASSWORD} \
+                      -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
+                      -e JWT_SECRET=${JWT_SECRET} \
+                      -e JWT_EXPIRATION=86400000 \
+                      -e ENCRYPTION_SECRET_KEY=${AES_KEY} \
+                      -e CORS_ALLOWED_ORIGINS=http://localhost:3000 \
+                      ${DOCKER_HUB_USER}/credit-backend:latest"""
 
-                sleep 30
+                    sh "sleep 30"
 
-                docker run -d \
-                  --name credit-frontend \
-                  --network ${NETWORK} \
-                  --restart unless-stopped \
-                  -p 3000:80 \
-                  ${DOCKER_HUB_USER}/credit-frontend:latest
+                    sh """docker run -d \
+                      --name credit-frontend \
+                      --network ${NETWORK} \
+                      --restart unless-stopped \
+                      -p 3000:80 \
+                      ${DOCKER_HUB_USER}/credit-frontend:latest"""
 
-                echo "Deploy OK"
-                """
+                    echo "Deploy OK"
+                }
             }
         }
 
         stage('Smoke Test') {
             steps {
-                sh """
-                sleep 15
-                curl -f http://localhost:3000 && echo "Frontend OK" || echo "Frontend check needed"
-                docker ps | grep -E "credit-backend|credit-frontend|mysql-db"
-                """
+                sh "sleep 15"
+                sh "curl -f http://localhost:3000 && echo 'Frontend OK' || echo 'Frontend check needed'"
+                sh "docker ps | grep -E 'credit-backend|credit-frontend|mysql-db'"
             }
         }
     }
 
     post {
         success {
-            echo "Build ${BUILD_NUMBER} - SUCCES - Frontend: http://localhost:3000"
+            echo "Build ${BUILD_NUMBER} SUCCES - http://localhost:3000"
         }
         failure {
             sh "docker logs credit-backend --tail 20 2>/dev/null || true"
-            echo "Build ${BUILD_NUMBER} - ECHEC"
+            echo "Build ${BUILD_NUMBER} ECHEC"
         }
         always {
             sh "docker logout || true"
