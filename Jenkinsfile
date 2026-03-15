@@ -15,6 +15,7 @@ pipeline {
         JWT_SECRET       = '5367566B59703373367639792F423F4528482B4D6251655468576D5A71347437'
         AES_KEY          = 'MySecretKey12345MySecretKey12345'
         DB_URL           = 'jdbc:mysql://mysql-db:3306/python?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC'
+        K8S_MASTER       = '51.107.90.200'
     }
 
     options {
@@ -63,7 +64,7 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy Local') {
             steps {
                 script {
                     sh "docker network create ${NETWORK} 2>/dev/null || true"
@@ -96,7 +97,34 @@ pipeline {
                       -p 3000:80 \
                       ${DOCKER_HUB_USER}/credit-frontend:latest"""
 
-                    echo "Deploy OK"
+                    echo "Deploy Local OK"
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sshagent(['ssh-azure-key']) {
+                    sh """
+                        # Copier les manifests sur le master
+                        scp -o StrictHostKeyChecking=no -r \
+                            Kubernetes/ \
+                            azureuser@${K8S_MASTER}:/tmp/k8s/
+
+                        # Appliquer les manifests et redémarrer les pods
+                        ssh -o StrictHostKeyChecking=no \
+                            azureuser@${K8S_MASTER} '
+                                sudo kubectl apply -f /tmp/k8s/namespace.yaml
+                                sudo kubectl apply -f /tmp/k8s/mysql.yaml
+                                sudo kubectl apply -f /tmp/k8s/backend.yaml
+                                sudo kubectl apply -f /tmp/k8s/frontend.yaml
+                                sudo kubectl rollout restart deployment/backend -n credit-app
+                                sudo kubectl rollout restart deployment/frontend -n credit-app
+                                sudo kubectl rollout status deployment/backend -n credit-app --timeout=120s
+                                sudo kubectl rollout status deployment/frontend -n credit-app --timeout=120s
+                                sudo kubectl get pods -n credit-app
+                            '
+                    """
                 }
             }
         }
@@ -104,7 +132,8 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 sh "sleep 15"
-                sh "curl -f http://localhost:3000 && echo 'Frontend OK' || echo 'Frontend check needed'"
+                sh "curl -f http://localhost:3000 && echo 'Local OK' || echo 'Local check needed'"
+                sh "curl -f http://${K8S_MASTER}:30080 && echo 'K8s OK' || echo 'K8s check needed'"
                 sh "docker ps | grep -E 'credit-backend|credit-frontend|mysql-db'"
             }
         }
@@ -112,7 +141,7 @@ pipeline {
 
     post {
         success {
-            echo "Build ${BUILD_NUMBER} SUCCES - http://localhost:3000"
+            echo "Build ${BUILD_NUMBER} SUCCES - Local: http://localhost:3000 - K8s: http://${K8S_MASTER}:30080"
         }
         failure {
             sh "docker logs credit-backend --tail 20 2>/dev/null || true"
