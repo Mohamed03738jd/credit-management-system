@@ -106,13 +106,17 @@ pipeline {
             steps {
                 sshagent(['ssh-azure-key']) {
                     sh """
-                        # Copier les fichiers un par un
-                        ssh -o StrictHostKeyChecking=no azureuser@${K8S_MASTER} 'rm -rf /tmp/k8s && mkdir -p /tmp/k8s'
+                        # Supprimer avec sudo et recréer avec les bonnes permissions
+                        ssh -o StrictHostKeyChecking=no azureuser@${K8S_MASTER} \
+                            'sudo rm -rf /tmp/k8s && mkdir -p /tmp/k8s && chmod 777 /tmp/k8s'
+
+                        # Copier les fichiers
                         scp -o StrictHostKeyChecking=no Kubernetes/namespace.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
                         scp -o StrictHostKeyChecking=no Kubernetes/mysql.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
                         scp -o StrictHostKeyChecking=no Kubernetes/backend.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
                         scp -o StrictHostKeyChecking=no Kubernetes/frontend.yaml azureuser@${K8S_MASTER}:/tmp/k8s/
 
+                        # Déployer
                         ssh -o StrictHostKeyChecking=no azureuser@${K8S_MASTER} '
                             sudo kubectl apply -f /tmp/k8s/namespace.yaml
                             sudo kubectl apply -f /tmp/k8s/mysql.yaml
