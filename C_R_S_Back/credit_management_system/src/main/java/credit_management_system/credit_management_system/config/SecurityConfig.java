@@ -39,25 +39,26 @@ public class SecurityConfig {
     private String allowedOriginsStr;
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-            .csrf(csrf -> csrf.disable())
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .authorizeHttpRequests(auth -> auth
-                    .requestMatchers("/api/auth/**").permitAll()
-                    .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                    .requestMatchers("/api/credits/**").authenticated()
-                    .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                    .anyRequest().authenticated()
-            )
-            .sessionManagement(session -> session
-                    .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
-            .authenticationProvider(authenticationProvider())
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http
+        .csrf(csrf -> csrf.disable())
+        .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+        .authorizeHttpRequests(auth -> auth
+            // ✅ EN PREMIER — avant toute règle restrictive
+            .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+            .requestMatchers("/api/auth/**").permitAll()
+            .requestMatchers("/api/admin/**").hasRole("ADMIN")
+            .requestMatchers("/api/credits/**").authenticated()
+            .anyRequest().authenticated()
+        )
+                .sessionManagement(session -> session
+                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+        )
+        .authenticationProvider(authenticationProvider())
+        .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
-        return http.build();
-    }
+    return http.build();
+}
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
