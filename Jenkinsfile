@@ -17,12 +17,15 @@ pipeline {
         DB_URL           = 'jdbc:mysql://mysql-db:3306/python?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC'
         K8S_MASTER       = '51.107.90.200'
     }
+
     options {
         buildDiscarder(logRotator(numToKeepStr: '5'))
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
     }
+
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
