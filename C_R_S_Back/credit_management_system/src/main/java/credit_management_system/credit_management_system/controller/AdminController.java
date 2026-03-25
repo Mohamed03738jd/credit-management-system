@@ -15,7 +15,6 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('ADMIN')")
 @CrossOrigin(origins = {"http://localhost:3000", "http://localhost:5173", "http://51.107.90.200:30080"})
 public class AdminController {
     
