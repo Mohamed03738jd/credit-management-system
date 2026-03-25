@@ -14,7 +14,7 @@ const Navbar = () => {
   return (
     <nav className="navbar">
       <div className="navbar-brand">
-        🏦 Gestion des Test
+        🏦 Gestion des Test2
       </div>
       
       <div className="navbar-menu">
