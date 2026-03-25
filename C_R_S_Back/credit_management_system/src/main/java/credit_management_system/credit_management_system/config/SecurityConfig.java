@@ -47,7 +47,7 @@ public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Excepti
             // ✅ EN PREMIER — avant toute règle restrictive
             .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
             .requestMatchers("/api/auth/**").permitAll()
-            .requestMatchers("/api/admin/**").hasRole("ADMIN")
+            .requestMatchers("/api/admin/**").permitAll() //hasRole("ADMIN")
             .requestMatchers("/api/credits/**").authenticated()
             .anyRequest().authenticated()
         )
