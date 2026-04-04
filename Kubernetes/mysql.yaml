@@ -5,7 +5,7 @@ metadata:
   namespace: credit-app
 type: Opaque
 stringData:
-  MYSQL_ROOT_PASSWORD: ""
+  MYSQL_ROOT_PASSWORD: "mohamed12345"
   MYSQL_DATABASE: "python"
 ---
 apiVersion: apps/v1

@@ -15,8 +15,8 @@ spec:
     spec:
       initContainers:
         - name: wait-mysql
-          image: busybox:1.35
-          command: ['sh', '-c', 'until nc -z mysql-service 3306; do echo waiting; sleep 3; done']
+          image: busybox:1.28        
+          command: ['sh', '-c', 'until nc -z mysql-service.credit-app.svc.cluster.local 3306; do echo waiting; sleep 3; done']
       containers:
         - name: backend
           image: mohamedelaazzaoui00/credit-backend:latest
