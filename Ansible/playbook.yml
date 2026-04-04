@@ -1,10 +1,23 @@
+---
 - name: Suppression et Réinstallation de Kubernetes et Docker
   hosts: all
   become: yes
-  gather_facts: yes  
+  gather_facts: yes
+
+  # ================================================================
+  # VARIABLES GLOBALES
+  # ================================================================
+  vars:
+    k8s_version: "v1.28"
+    pod_network_cidr: "10.244.0.0/16"
+    master_ip: "10.0.1.10"             # ✅ IP INTERNE Azure (eth0)
+    master_public_ip: "51.107.90.200"  # ✅ IP publique pour le certificat TLS
 
   tasks:
 
+    # ================================================================
+    # 🔴 SUPPRESSION COMPLÈTE
+    # ================================================================
     - name: Arrêter Docker et Kubelet si existants
       service:
         name: "{{ item }}"
@@ -13,6 +26,21 @@
       loop:
         - docker
         - kubelet
+        - containerd
+      ignore_errors: yes
+
+    - name: Réinitialiser kubeadm
+      shell: kubeadm reset -f || true
+      changed_when: false
+
+    # ✅ CORRECTION 1 : Tuer les processus qui bloquent les ports
+    - name: Libérer les ports Kubernetes occupés
+      shell: |
+        fuser -k 6443/tcp || true
+        fuser -k 2379/tcp || true
+        fuser -k 2380/tcp || true
+        fuser -k 10250/tcp || true
+      changed_when: false
       ignore_errors: yes
 
     - name: Enlever le hold sur les paquets Kubernetes
@@ -25,6 +53,7 @@
           - docker.io
           - docker-ce
           - docker-ce-cli
+          - containerd.io
           - kubelet
           - kubeadm
           - kubectl
@@ -35,6 +64,7 @@
     - name: Démonter les volumes Kubernetes encore montés
       shell: |
         mount | grep kubelet | awk '{print $3}' | xargs -r umount -lf || true
+        mount | grep containerd | awk '{print $3}' | xargs -r umount -lf || true
       changed_when: false
 
     - name: Supprimer les fichiers et configurations
@@ -44,12 +74,31 @@
       loop:
         - /var/lib/docker
         - /var/lib/kubelet
+        - /var/lib/etcd
+        - /var/lib/containerd
         - /etc/docker
         - /etc/kubernetes
+        - /etc/cni
+        - /opt/cni
+        - /var/lib/cni
+        - /home/azureuser/.kube
+        - /root/.kube
         - /etc/apt/sources.list.d/kubernetes.list
         - /etc/apt/sources.list.d/docker.list
         - /etc/apt/keyrings/docker.gpg
         - /etc/apt/keyrings/kubernetes.gpg
+        - /etc/sysctl.d/k8s.conf
+        - /etc/modules-load.d/k8s.conf
+      ignore_errors: yes
+
+    # ✅ CORRECTION 2 : Nettoyer iptables après reset
+    - name: Nettoyer les règles iptables
+      shell: |
+        iptables -F
+        iptables -t nat -F
+        iptables -t mangle -F
+        iptables -X
+      changed_when: false
       ignore_errors: yes
 
     - name: Nettoyer les paquets inutiles
@@ -57,62 +106,34 @@
         autoremove: yes
         autoclean: yes
 
-    # ================================
-    # 🔹 INSTALLATION DOCKER
-    # ================================
-    - name: Installer les dépendances nécessaires
+    - name: Mise à jour du cache apt
       apt:
-        name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - gnupg
-          - lsb-release
-        state: present
         update_cache: yes
 
-    - name: Créer le dossier keyrings
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Ajouter la clé GPG de Docker
-      shell: |
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-        gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-      args:
-        creates: /etc/apt/keyrings/docker.gpg
-
-    - name: Ajouter le dépôt Docker
-      apt_repository:
-        # ✅ ansible_distribution_release au lieu de ansible_lsb.codename
-        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
-        state: present
-        filename: docker
-
-    - name: Installer Docker CE
-      apt:
-        name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-        state: present
-        update_cache: yes
-
-    - name: Activer et démarrer Docker
-      service:
-        name: docker
-        state: started
-        enabled: yes
-
-  
-    - name: Désactiver le swap
-      shell: swapoff -a && sed -i '/swap/d' /etc/fstab
+    # ================================================================
+    # 🔹 PRÉREQUIS SYSTÈME (tous les nœuds)
+    # ================================================================
+    - name: Désactiver le swap immédiatement
+      shell: swapoff -a
       changed_when: false
 
-    - name: Charger les modules noyau
-      shell: modprobe overlay && modprobe br_netfilter
+    - name: Désactiver le swap au démarrage (fstab)
+      replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\s+swap\s+.*)$'
+        replace: '# \1'
+
+    - name: Charger les modules noyau au démarrage
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Charger les modules noyau maintenant
+      shell: |
+        modprobe overlay
+        modprobe br_netfilter
       changed_when: false
 
     - name: Configurer sysctl pour Kubernetes
@@ -127,17 +148,107 @@
       shell: sysctl --system
       changed_when: false
 
+    # ================================================================
+    # 🔹 INSTALLATION DOCKER + CONTAINERD
+    # ================================================================
+    - name: Installer les dépendances nécessaires
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - software-properties-common
+        state: present
+        update_cache: yes
 
+    - name: Créer le dossier keyrings
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Ajouter la clé GPG de Docker
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+        gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Ajouter le dépôt Docker
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        filename: docker
+
+    - name: Installer Docker CE et Containerd
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        state: present
+        update_cache: yes
+
+    # ✅ CORRECTION 3 : Fixer pause:3.9 ET SystemdCgroup
+    - name: Configurer containerd avec SystemdCgroup et pause:3.9
+      shell: |
+        containerd config default > /etc/containerd/config.toml
+        sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+        sed -i 's|sandbox_image = "registry.k8s.io/pause:3.8"|sandbox_image = "registry.k8s.io/pause:3.9"|' /etc/containerd/config.toml
+      changed_when: true
+
+    - name: Vérifier la config containerd
+      shell: grep -E "SystemdCgroup|sandbox_image" /etc/containerd/config.toml
+      register: containerd_check
+      changed_when: false
+
+    - name: Afficher la config containerd
+      debug:
+        msg: "{{ containerd_check.stdout_lines }}"
+
+    - name: Redémarrer et activer containerd
+      service:
+        name: containerd
+        state: restarted
+        enabled: yes
+
+    - name: Attendre que containerd soit prêt
+      shell: systemctl is-active containerd
+      register: containerd_status
+      until: containerd_status.stdout == "active"
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: Activer et démarrer Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ajouter azureuser au groupe docker
+      user:
+        name: azureuser
+        groups: docker
+        append: yes
+
+    # ================================================================
+    # 🔹 INSTALLATION KUBERNETES
+    # ================================================================
     - name: Ajouter la clé GPG de Kubernetes
       shell: |
-        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | \
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/Release.key | \
         gpg --dearmor -o /etc/apt/keyrings/kubernetes.gpg
+        chmod a+r /etc/apt/keyrings/kubernetes.gpg
       args:
         creates: /etc/apt/keyrings/kubernetes.gpg
 
     - name: Ajouter le dépôt Kubernetes
       apt_repository:
-        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /"
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/ /"
         state: present
         filename: kubernetes
 
@@ -154,20 +265,140 @@
       shell: apt-mark hold kubelet kubeadm kubectl
       changed_when: false
 
-    - name: Activer et démarrer Kubelet
+    - name: Activer Kubelet
       service:
         name: kubelet
         state: started
         enabled: yes
+
+    # ================================================================
+    # 🔹 INITIALISATION DU CLUSTER (Master uniquement)
+    # ================================================================
+    - name: Initialiser le cluster Kubernetes
+      shell: |
+        kubeadm init \
+          --apiserver-advertise-address={{ master_ip }} \
+          --apiserver-cert-extra-sans={{ master_public_ip }} \
+          --pod-network-cidr={{ pod_network_cidr }} \
+          --ignore-preflight-errors=all
+      when: inventory_hostname in groups['master']
+      register: kubeadm_init
+      changed_when: true
+
+    - name: Créer le dossier .kube pour azureuser
+      file:
+        path: /home/azureuser/.kube
+        state: directory
+        owner: azureuser
+        group: azureuser
+        mode: '0755'
+      when: inventory_hostname in groups['master']
+
+    - name: Créer le dossier .kube pour root
+      file:
+        path: /root/.kube
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      when: inventory_hostname in groups['master']
+
+    - name: Copier le kubeconfig admin vers azureuser
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/azureuser/.kube/config
+        remote_src: yes
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      when: inventory_hostname in groups['master']
+
+    - name: Copier le kubeconfig admin vers root
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname in groups['master']
+
+    - name: Installer le plugin réseau Flannel (CNI)
+      shell: kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      when: inventory_hostname in groups['master']
+      changed_when: true
+
+    # ================================================================
+    # 🔹 JOIN DES WORKERS
+    # ================================================================
+    - name: Récupérer la commande join depuis le master
+      shell: kubeadm token create --print-join-command
+      when: inventory_hostname in groups['master']
+      register: join_command
+      changed_when: false
+
+    - name: Distribuer la commande join aux workers
+      set_fact:
+        join_cmd: "{{ hostvars[groups['master'][0]]['join_command'].stdout }}"
+      when:
+        - inventory_hostname in groups['worker']
+        - hostvars[groups['master'][0]]['join_command'] is defined
+        - hostvars[groups['master'][0]]['join_command'].stdout is defined
+
+    - name: Joindre les workers au cluster
+      shell: "{{ join_cmd }} --ignore-preflight-errors=all"
+      when:
+        - inventory_hostname in groups['worker']
+        - join_cmd is defined
+      changed_when: true
+
+    # ================================================================
+    # 🔹 VÉRIFICATION FINALE (Master uniquement)
+    # ================================================================
+    - name: Attendre que les nœuds soient Ready
+      shell: kubectl get nodes --no-headers | grep " Ready" | wc -l
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: ready_nodes
+      until: ready_nodes.stdout | int >= 2
+      retries: 20
+      delay: 15
+      when: inventory_hostname in groups['master']
+      changed_when: false
+      ignore_errors: yes
+
     - name: Vérifier les versions installées
       shell: |
-        docker --version
-        kubelet --version
-        kubeadm version -o short
-        kubectl version --client
+        echo "=== Docker ===" && docker --version
+        echo "=== Kubelet ===" && kubelet --version
+        echo "=== Kubeadm ===" && kubeadm version -o short
+        echo "=== Kubectl ===" && kubectl version --client
       register: binaries
       changed_when: false
 
     - name: Afficher les versions
       debug:
         msg: "{{ binaries.stdout_lines }}"
+
+    - name: Afficher l'état du cluster
+      shell: |
+        echo "=== NODES ===" && kubectl get nodes -o wide
+        echo ""
+        echo "=== PODS SYSTÈME ===" && kubectl get pods -n kube-system
+        echo ""
+        echo "=== FLANNEL ===" && kubectl get pods -n kube-flannel
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: cluster_status
+      when: inventory_hostname in groups['master']
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Afficher l'état du cluster
+      debug:
+        msg: "{{ cluster_status.stdout_lines }}"
+      when:
+        - inventory_hostname in groups['master']
+        - cluster_status is defined
